@@ -3,6 +3,7 @@
 Created on Thu Jul 27 00:57:22 2017
 
 @author:    Jonas Hartmann @ Gilmour group @ EMBL Heidelberg
+            Renato Alves - Implementing memory
 
 @descript:  Simple example code for the EMBL Coding Club Summer Challenge 2017,
             showing how to load and visualize a maze, as well as a very
@@ -11,113 +12,129 @@ Created on Thu Jul 27 00:57:22 2017
 @version:   python 2.7
 """
 
-
-#%%
-
-### Prep
+from __future__ import print_function
 
 # This code uses a numpy array to represent the maze and pyplot for figures
 import numpy as np
 import matplotlib.pyplot as plt
+from glob import glob
 
 
-#%%
-
-### Loading a Maze
-
-# Note: Since there are only two types of 'blocks' in the maze (wall and
-#       corridor), the Boolean data type (False or True) is well-suited to
-#       represent it.
-path = r'maze_small_0.txt'
-maze = np.loadtxt(path, dtype=np.bool, delimiter=',')
-print maze.shape
+class ExitFound(Exception):
+    pass
 
 
-#%%
-
-### Displaying the Maze
-
-# This is just one way of doing it.
-plt.imshow(maze, cmap='gray', interpolation='none')
-plt.axis('off')
-plt.show()
+class GiveUp(Exception):
+    pass
 
 
-#%%
+class Teresa(object):
+    def __init__(self, maze, start=(0, 1), tries=100000, plot=None):
+        self.start = start
+        self.exit = (maze.shape[0] - 1, maze.shape[1] - 2)
+        self.old_position = start
+        self.position = start
+        self.maze = maze
+        self.directions = (
+            (-1, 0),  # Left
+            (1, 0),   # Right
+            (0, -1),  # Up
+            (0, 1),   # Down
+        )
+        self.visited = np.zeros_like(maze)
+        self.visited[(0, 0)] = 0  # Prevent Teresa from leaving through the entrance
+        self.tries = tries
+        # As going through the maze, keep track of all the forks in the order they were visited
+        # This is used to return to the previous fork in case we made a bad decision
+        self.forks = []
+        self.plot = plot
 
-### Stumbling Teresa
+    def position_from_move(self, move):
+        return (self.position[0] + move[0], self.position[1] + move[1])
 
-# This is a very simple implementation of the "maze walker" Teresa.
-# Here, she simply moves in a random direction at every step. If that direction
-# happens to be a wall, she stops and tries again. With this approach, she will
-# (eventually) get to the exit, but it will take a long time, especially for
-# larger mazes......  Can you improve Teresa's algorithm?
+    def get_allowed_moves(self):
+        allowed = []
+        for d in self.directions:
+            # Check if the exit was found
+            pos = self.position_from_move(d)
+            if pos == self.exit:
+                print("I've found the exit!")
+                self.old_position = self.position
+                self.position = pos
+                self.show_move()
+                if self.plot:
+                    self.plot.pause(5)
+                raise ExitFound()
+            if self.maze[pos] == 1 and self.visited[pos] == 0:  # not a wall and not visited
+                allowed.append(d)
 
-# Teresa's initial position is at the entrance (top left)
-# Note: the position is given as (y,x), where y counts from the
-#       top left downward and x from the top left rightward.
-teresa = (0,1)
+        return allowed
+
+    def dead_end(self, allowed_moves):
+        if len(allowed_moves) == 0:
+            return True
+
+        return False
+
+    def generate_move(self):
+        allowed_moves = self.get_allowed_moves()
+
+        # Randomly decide one of the four directions
+        if self.dead_end(allowed_moves):
+            # Roll back to last fork
+            self.position = self.forks.pop()
+
+            if len(self.get_allowed_moves()) >= 1:
+                self.forks.append(self.position)
+
+            return self.generate_move()
+
+        move = allowed_moves[np.random.randint(0, len(allowed_moves))]
+
+        # Apply the movement to the position
+        new_position = self.position_from_move(move)
+
+        if len(allowed_moves) >= 2:
+            self.forks.append(self.position)
+
+        # Update position
+        return new_position
+
+    def update_position(self, new_position):
+        self.visited[new_position] = 1
+        self.old_position = self.position
+        self.position = new_position
+
+    def show_move(self):
+        if self.plot:
+            self.plot.plot(*reversed(zip(self.old_position, self.position)), color="blue")
+            self.plot.pause(.00001)
+
+    def walk(self):
+        while True:
+            new_position = self.generate_move()
+
+            self.update_position(new_position)
+
+            if not self.tries:
+                raise GiveUp("I'm tired - I give up!")
+            else:
+                self.tries -= 1
+
+            self.show_move()
 
 
-#%%
+for path in glob("maze_*.txt"):
+    loaded_maze = np.loadtxt(path, dtype=np.bool, delimiter=',')
 
-# Define a function that updates Teresa's position
-def update_position(position, maze):
+    # Display the explored area
+    plt.figure(figsize=(10, 10))                            # Set the figure size
+    plt.imshow(loaded_maze, cmap='gray', interpolation='none')     # Show the maze
+    plt.ion()                                               # Update the same window without blocking
+    plt.axis('off')                                         # Switch off the axes
 
-    # Randomly decide one of the four directions
-    directions = [(-1,0),(1,0),(0,-1),(0,1)]
-    move = directions[np.random.randint(0,4)]
-
-    # Just in case Teresa is still standing at the entrance,
-    # prevent her from moving back out of the maze
-    if position == (0,1) and move[0] == -1:
-        move = (0,0)
-
-    # Check if there is a wall in the direction of movement
-    if maze[position[0]+move[0], position[1]+move[1]] == 0:
-        move = (0,0)
-
-    # Apply the movement to the position
-    new_position = (position[0]+move[0], position[1]+move[1])
-
-    # Return the updated position
-    return new_position
-
-
-#%%
-
-# Loop through updates of the position
-exit_found = False
-all_positions = [teresa]
-while not exit_found:
-
-    # Update
-    teresa = update_position(teresa, maze)
-
-    # Keep track of the movement
-    all_positions.append(teresa)
-
-    # Check if the exit was found
-    if teresa == (-1,-2):
-        print "I've found the exit!"
-        exit_found = True
-
-    # After 100000 steps, give up
-    if len(all_positions) == 100000:
-        print "I'm tired - I give up!"
-        break
-
-
-#%%
-
-# Display the explored area
-plt.figure(figsize=(8,8))                               # Set the figure size
-plt.imshow(maze, cmap='gray', interpolation='none')     # Show the maze
-plt.plot([position[1] for position in all_positions],   # Plot the path
-         [position[0] for position in all_positions])
-plt.axis('off')                                         # Switch off the axes
-plt.show()                                              # Show the figure
-
-
-#%%
-
+    teresa = Teresa(loaded_maze, plot=plt)
+    try:
+        teresa.walk()
+    except ExitFound:
+        pass
